@@ -43,6 +43,10 @@ func NewService(cfg *config.Config) *Service {
 	// SNILS: 123-456-789 01 or 123-456-789-01 (3-3-3-2 format with dashes and optional space)
 	srv.register("snils", `\b\d{3}-\d{3}-\d{3}[-\s]\d{2}\b`, "[MASKED_SNILS]")
 
+	// US Social Security Numbers
+	// XXX-XX-XXXX or XXX XX XXXX
+	srv.register("ssn", `\b\d{3}-\d{2}-\d{4}\b|\b\d{3} \d{2} \d{4}\b`, "[MASK_SSN]")
+
 	return srv
 }
 

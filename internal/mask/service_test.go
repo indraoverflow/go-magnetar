@@ -56,9 +56,9 @@ mask:
 	cfg := loadTestConfig(t, yaml)
 	srv := NewService(cfg)
 
-	// Service should have 5 records: email, github_token, gitlab_token, passport, snils
-	if len(srv.records) != 5 {
-		t.Errorf("expected 5 records when mask is enabled, got %d", len(srv.records))
+	// Service should have 6 records: email, github_token, gitlab_token, passport, snils, ssn
+	if len(srv.records) != 6 {
+		t.Errorf("expected 6 records when mask is enabled, got %d", len(srv.records))
 	}
 }
 
@@ -77,9 +77,9 @@ mask:
 	cfg := loadTestConfig(t, yaml)
 	srv := NewService(cfg)
 
-	// Service should have 4 records: github_token, gitlab_token, passport, snils (no email)
-	if len(srv.records) != 4 {
-		t.Errorf("expected 4 records when email is skipped, got %d", len(srv.records))
+	// Service should have 5 records: github_token, gitlab_token, passport, snils, ssn (no email)
+	if len(srv.records) != 5 {
+		t.Errorf("expected 5 records when email is skipped, got %d", len(srv.records))
 	}
 }
 
@@ -665,6 +665,174 @@ Normal text here`
 	if !contains(output, "User data:") {
 		t.Error("text 'User data:' was removed")
 	}
+	if !contains(output, "Normal text here") {
+		t.Error("non-sensitive text was removed")
+	}
+}
+
+func TestProcessSSNMasking(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		yaml  string
+		input string
+		want  string
+	}{
+		{
+			name: "ssn with dashes",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "SSN: 123-45-6789",
+			want:  "SSN: [MASK_SSN]",
+		},
+		{
+			name: "ssn with spaces",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "SSN: 123 45 6789",
+			want:  "SSN: [MASK_SSN]",
+		},
+		{
+			name: "multiple ssns",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "SSNs: 123-45-6789, 987 65 4321",
+			want:  "SSNs: [MASK_SSN], [MASK_SSN]",
+		},
+		{
+			name: "no ssn",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "No SSN here",
+			want:  "No SSN here",
+		},
+		{
+			name: "invalid ssn (wrong format)",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "SSN: 12-45-6789",
+			want:  "SSN: 12-45-6789",
+		},
+		{
+			name: "ssn with leading/trailing whitespace",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "  SSN: 123-45-6789  ",
+			want:  "  SSN: [MASK_SSN]  ",
+		},
+		{
+			name: "ssn with adjacent punctuation",
+			yaml: `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`,
+			input: "SSN: 123-45-6789.",
+			want:  "SSN: [MASK_SSN].",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Helper()
+
+			cfg := loadTestConfig(t, tt.yaml)
+			srv := NewService(cfg)
+
+			got := srv.Process(context.Background(), tt.input)
+
+			if got != tt.want {
+				t.Errorf("Process() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProcessAllMaskersMixed(t *testing.T) {
+	t.Parallel()
+
+	yaml := `version: "1.0"
+profile: test
+
+mask:
+  enable: true
+  skip:
+    email: false
+`
+
+	cfg := loadTestConfig(t, yaml)
+	srv := NewService(cfg)
+
+	input := `User: john@example.com
+GitHub: ghp_` + repeatChar('x', 36) + `
+GitLab: glpat-` + repeatChar('x', 20) + `
+Passport: 1234 567890
+SNILS: 123-456-789 01
+SSN: 123-45-6789
+Normal text here`
+
+	output := srv.Process(context.Background(), input)
+
+	// Verify all sensitive data is masked
+	if contains(output, "john@example.com") {
+		t.Error("email was not masked")
+	}
+	if contains(output, "ghp_"+repeatChar('x', 36)) {
+		t.Error("github token was not masked")
+	}
+	if contains(output, "glpat-"+repeatChar('x', 20)) {
+		t.Error("gitlab token was not masked")
+	}
+	if contains(output, "1234 567890") {
+		t.Error("passport was not masked")
+	}
+	if contains(output, "123-456-789 01") {
+		t.Error("snils was not masked")
+	}
+	if contains(output, "123-45-6789") {
+		t.Error("ssn was not masked")
+	}
+	// Verify non-sensitive text is preserved
 	if !contains(output, "Normal text here") {
 		t.Error("non-sensitive text was removed")
 	}
